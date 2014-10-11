@@ -1,0 +1,8 @@
+# depslib dependency file v1.0
+1413006610 source:c:\users\Павел\desktop\Сфера\db\lib\main.c
+	<stdlib.h>
+	<stdio.h>
+	<string.h>
+	<fcntl.h>
+	<unistd.h>
+
