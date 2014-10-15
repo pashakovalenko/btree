@@ -14,7 +14,7 @@
 
 /* check `man dbopen` */
 struct DBT {
-     void  *data;
+     char *data;
      size_t size;
 };
 
@@ -51,12 +51,21 @@ struct BtreeNode {
 
 struct DB {
     /* Public API */
-    int (*close)(struct DB *db);
-    int (*del)(struct DB *db, const struct DBT *key);
-    int (*get)(struct DB *db, struct DBT *key, struct DBT *data);
-    int (*put)(struct DB *db, struct DBT *key, const struct DBT *data);
-    //int (*sync)(const struct DB *db);
-    /* Private API */
+	/* Returns 0 on OK, -1 on Error */
+	int (*close)(struct DB *db);
+	int (*del)(struct DB *db, struct DBT *key);
+	/* * * * * * * * * * * * * *
+	 * Returns malloc'ed data into 'struct DBT *data'.
+	 * Caller must free data->data. 'struct DBT *data' must be alloced in
+	 * caller.
+	 * * * * * * * * * * * * * */
+	int (*get)(struct DB *db, struct DBT *key, struct DBT *data);
+	int (*put)(struct DB *db, struct DBT *key, struct DBT *data);
+	/* For future uses - sync cached pages with disk
+	 * int (*sync)(const struct DB *db)
+	 * */
+	/* Private API */
+	/*     ...     */
     struct DBC config;
 
     FILE *dbfl;
@@ -66,6 +75,10 @@ struct DB {
 
 struct DB *dbcreate(const char *file, const struct DBC conf);
 struct DB *dbopen  (const char *file); /* Metadata in file */
+
+int del_inter(struct DB *db, struct DBT *key);
+int get_inter (struct DB *db, struct DBT *key, struct DBT *data);
+int put_inter (struct DB *db, struct DBT *key, struct DBT *data);
 
 
 
@@ -83,6 +96,9 @@ struct DB *dbcreate(const char *file, const struct DBC conf)
     db->root->n = 0;
     db->root->maxn = LIST_SIZE;
     db->root->islist = 1;
+    db->get = get_inter;
+    db->put = put_inter;
+    db->del = del_inter;
     return db;
 }
 
@@ -169,6 +185,21 @@ int get(struct BtreeNode *node, struct Key *key, struct Data *data, struct DB *d
     }
 }
 
+int get_inter(struct DB *db, struct DBT *key, struct DBT *data)
+{
+    struct Key skey;
+    skey.size = key->size;
+    memcpy(&skey.data, key->data, skey.size);
+    struct Data sdata;
+    int res = get(db->root, &skey, &sdata, db);
+    if (res < 0)
+        return res;
+    data->size = sdata.size;
+    data->data = calloc(sdata.size, 1);
+    memcpy(data->data, &sdata.data, sdata.size);
+    return res;
+}
+
 int put(struct BtreeNode *node, struct Key *key, struct Data *data, struct DB *db)
 {
     int i = 0;
@@ -205,7 +236,7 @@ int put(struct BtreeNode *node, struct Key *key, struct Data *data, struct DB *d
     }
 }
 
-int put_inter(struct Key *key, struct Data *data, struct DB *db)
+int put_inter(struct DB *db, struct DBT *key, struct DBT *data)
 {
     struct BtreeNode *root = db->root;
     if (root->n >= 2 * root->maxn - 1) {
@@ -220,15 +251,14 @@ int put_inter(struct Key *key, struct Data *data, struct DB *db)
         splitChild(root, 0, db);
     }
 
-    return put(root, key, data, db);
+    struct Key skey;
+    skey.size = key->size;
+    memcpy(&skey.data, key->data, skey.size);
+    struct Data sdata;
+    sdata.size = data->size;
+    memcpy(&sdata.data, data->data, sdata.size);
+    return put(root, &skey, &sdata, db);
     //free(root);
-}
-
-void stk(struct Key *a, char *b)
-{
-    a->size = strlen(b);
-    strcpy(a->data, b);
-    return;
 }
 
 void findmax(struct BtreeNode *node, struct Key *key, struct Data *data, struct DB *db)
@@ -462,9 +492,12 @@ void printTree(struct BtreeNode *node, struct DB *db, int k)
     return;
 }
 
-int del_inter(struct Key *key, struct DB *db)
+int del_inter(struct DB *db, struct DBT *key)
 {
-    int res = del(db->root, key, db);
+    struct Key skey;
+    skey.size = key->size;
+    memcpy(&skey.data, key->data, skey.size);
+    int res = del(db->root, &skey, db);
     if (db->root->n == 0) {
         struct BtreeNode *temp = readNode(db->root->link[0], db);
         freeNode(db->root, db);
@@ -474,7 +507,14 @@ int del_inter(struct Key *key, struct DB *db)
     return res;
 }
 
-void init(struct Key *mykey, struct Data *mydata) {
+void stk(struct Key *a, char *b)
+{
+    a->size = strlen(b) + 1;
+    strcpy(a->data, b);
+    return;
+}
+
+void init(struct Key *mykey, struct Data *mydata, struct DBT *key, struct DBT *data, int k) {
     stk(&mykey[0], "0");
     stk(&mydata[0], "My Little Pony");
     stk(&mykey[1], "1");
@@ -493,6 +533,13 @@ void init(struct Key *mykey, struct Data *mydata) {
     stk(&mydata[7], "Griffindor");
     stk(&mykey[8], "8");
     stk(&mydata[8], "Conquest");
+    for (int i = 0; i < k; i++) {
+        key[i].size = mykey[i].size;
+        key[i].data = &mykey[i].data;
+        data[i].size = mydata[i].size;
+        data[i].data = &mydata[i].data;
+
+    }
     return;
 }
 
@@ -505,36 +552,39 @@ int main()
     int size = 300, k = 9;
     struct Key mykey[size];
     struct Data mydata[size];
+    struct DBT key[size], data[size];
     //memset(mydata, 0, sizeof(mydata));
     //memset(mykey, 0, sizeof(mykey));
 
-    init(&mykey, &mydata);
+    init(&mykey, &mydata, &key, &data, k);
 
     for (int i = 0; i < k; i++)
-        put_inter(&mykey[i], &mydata[i], mydb);
+        //put_inter(&mykey[i], &mydata[i], mydb);
+        mydb->put(mydb, &key[i], &data[i]);
     printTree(mydb->root, mydb, 1);
 
-
-    for (int i = 0; i < k - 1; i++) {
-    printf("%d\n", del_inter(&mykey[i], mydb));
-    printf("\n\n\n\n");
-    printTree(mydb->root, mydb, 1);
+    for (int i = 0; i < k - 4; i++) {
+        printf("%d\n", mydb->del(mydb, &key[i]));
+        printf("\n\n\n\n");
+        printTree(mydb->root, mydb, 1);
     }
+
+    printf("\n\n\n\n");
+    int res;
+    for (int i = 0; i < k; i++) {
+        printf("%d\n", res = mydb->get(mydb, &key[i], &data[0]));
+        if (res >= 0) puts(data[0].data);
+        //printf("%d %d%d%d%d%\n", mydata[0].size, mydata[0].data[0], mydata[0].data[1], mydata[0].data[2], mydata[0].data[3]);
+    }
+
+
     /*
     printf("%d\n", del(mydb->root, &mykey[2], mydb));
     printf("\n\n\n\n");
     printTree(mydb->root, mydb, 1);
     */
 
-    /*printf("\n\n\n\n");
-    for (int i = 0; i < k; i++) {
-        printf("%d\n", get(mydb->root, &mykey[i], &mydata[0], mydb));
-        puts(mydata[0].data);
-        //printf("%d %d%d%d%d%\n", mydata[0].size, mydata[0].data[0], mydata[0].data[1], mydata[0].data[2], mydata[0].data[3]);
-    }
 
-    printf("%d %d\n", (int) sizeof(struct BtreeNode), LIST_SIZE);
-    */
     //scanf("\n");
     return 0;
 }
