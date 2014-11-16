@@ -1,5 +1,7 @@
 #define MAX_KEY_SIZE 20
 #define MAX_DATA_SIZE 100
+#include <map>
+#include <list>
 
 struct DBT {
      char *data;
@@ -9,6 +11,7 @@ struct DBT {
 struct DBC {
 	size_t db_size;
 	size_t chunk_size;
+    size_t memory_size;
 };
 
 
@@ -33,9 +36,6 @@ struct BtreeNode {
     int n, maxn;
     int offset;
     struct Record rec[];
-    /*struct Key key[2 * LIST_SIZE];
-    struct Data data[2 * LIST_SIZE];
-    int link[2 * LIST_SIZE + 1];*/
 };
 
 struct DB {
@@ -50,18 +50,21 @@ struct DB {
 	 * * * * * * * * * * * * * */
 	int (*get)(struct DB *db, struct DBT *key, struct DBT *data);
 	int (*put)(struct DB *db, struct DBT *key, struct DBT *data);
-	/* For future uses - sync cached pages with disk
-	 * int (*sync)(const struct DB *db)
-	 * */
+	/* For future uses - sync cached pages with disk*/
+    int (*sync)(const struct DB *db);
+
 	/* Private API */
-	/*     ...     */
-    struct DBC config;
+	struct DBC config;
 
     FILE *dbfl;
     int froff, maxnodecnt, root_off;
     struct BtreeNode *root;
     char *reser;
-}; /* Need for supporting multiple backends (HASH/BTREE) */
+    int chsize;
+    char *cache;
+    map <int, int> *chmap;
+    list <int> *lru;
+};
 
 struct DB *dbcreate(const char *file, const struct DBC conf);
 struct DB *dbopen  (const char *file); /* Metadata in file */
