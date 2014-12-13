@@ -1,7 +1,15 @@
+
 void stk(struct Key *a, char *b)
 {
-    a->size = strlen(b) + 1;
-    strcpy(a->data, b);
+    a->size = strlen((const char *)b) + 1;
+    strcpy(a->data, (const char *)b);
+    return;
+}
+
+void stk(struct Data *a, char *b)
+{
+    a->size = strlen((const char *)b) + 1;
+    strcpy(a->data, (const char *)b);
     return;
 }
 
@@ -26,9 +34,9 @@ void init(struct Key *mykey, struct Data *mydata, struct DBT *key, struct DBT *d
     stk(&mydata[8], "Conquest");
     for (int i = 0; i < k; i++) {
         key[i].size = mykey[i].size;
-        key[i].data = &mykey[i].data;
+        key[i].data = (char *)&mykey[i].data;
         data[i].size = mydata[i].size;
-        data[i].data = &mydata[i].data;
+        data[i].data = (char *)&mydata[i].data;
 
     }
     return;
@@ -46,7 +54,7 @@ int main()
     struct Data mydata[size];
     struct DBT key[size], data[size];
 
-    init(&mykey, &mydata, &key, &data, k);
+    init((Key *)&mykey, (Data *)&mydata, (DBT *)&key, (DBT *)&data, k);
 
     for (int i = 0; i < k; i++)
         mydb->put(mydb, &key[i], &data[i]);
@@ -72,3 +80,4 @@ int main()
     //scanf("\n");
     return 0;
 }
+

@@ -1,19 +1,19 @@
-#define MAX_KEY_SIZE 20
+#define MAX_KEY_SIZE 40
 #define MAX_DATA_SIZE 100
 #include <map>
 #include <list>
+#include <string>
+
+struct DBC {
+	size_t db_size;
+	size_t chunk_size;
+	size_t mem_size;
+};
 
 struct DBT {
      char *data;
      size_t size;
 };
-
-struct DBC {
-	size_t db_size;
-	size_t chunk_size;
-    size_t memory_size;
-};
-
 
 struct Key {
     size_t size;
@@ -32,6 +32,7 @@ struct Record {
 };
 
 struct BtreeNode {
+    int lol;
     int islist;
     int n, maxn;
     int offset;
@@ -43,31 +44,34 @@ struct DB {
 	/* Returns 0 on OK, -1 on Error */
 	int (*close)(struct DB *db);
 	int (*del)(struct DB *db, struct DBT *key);
-	/* * * * * * * * * * * * * *
-	 * Returns malloc'ed data into 'struct DBT *data'.
-	 * Caller must free data->data. 'struct DBT *data' must be alloced in
-	 * caller.
-	 * * * * * * * * * * * * * */
 	int (*get)(struct DB *db, struct DBT *key, struct DBT *data);
 	int (*put)(struct DB *db, struct DBT *key, struct DBT *data);
 	/* For future uses - sync cached pages with disk*/
-    int (*sync)(const struct DB *db);
+    //int (*sync)(const struct DB *db);
 
 	/* Private API */
 	struct DBC config;
 
-    FILE *dbfl;
+    int dbfl;
     int froff, maxnodecnt, root_off;
     struct BtreeNode *root;
     char *reser;
     int chsize;
     char *cache;
-    map <int, int> *chmap;
-    list <int> *lru;
+    std::map <int, int> *chmap;
+    std::list <int> *lru;
 };
-
+extern "C" {
 struct DB *dbcreate(const char *file, const struct DBC conf);
 struct DB *dbopen  (const char *file); /* Metadata in file */
+int db_close(struct DB *db);
+int db_del(struct DB *db, char *key, size_t key_len);
+int db_get(struct DB *db, char *key, size_t key_len,
+	   void **val, size_t *val_len);
+int db_put(struct DB *db, char *key, size_t key_len,
+	   char *val, size_t val_len);
+int db_flush(struct DB *db);
+}
 
 int close_inter (struct DB *db);
 int del_inter (struct DB *db, struct DBT *key);

@@ -1,12 +1,15 @@
-#include <stdlib.h>
-#include <stdio.h>
-#include <string.h>
+#include <cstdlib>
+#include <cstdio>
+#include <cstring>
 #include <fcntl.h>
 #include <unistd.h>
-#include <math.h>
+#include <cmath>
+
 #include <map>
 #include <list>
 #include <iostream>
+#include <string>
+#include <cstring>
 
 using namespace std;
 
@@ -14,7 +17,6 @@ using namespace std;
 
 #define min(a, b) ((a) < (b) ? (a) : (b))
 #define max(a, b) ((a) > (b) ? (a) : (b))
-
 
 int db_close(struct DB *db) {
 	db->close(db);
@@ -55,6 +57,14 @@ int db_put(struct DB *db, char *key, size_t key_len,
 	return db->put(db, &keyt, &valt);
 }
 
+int db_flush(struct DB *db)
+{
+    return 0;
+}
+
+
+//=======================================End of interface block========================================
+
 void reser_set(char state, int pos, struct DB *db)
 {
     db->reser[pos / 8] = db->reser[pos / 8] & !(1 << (pos % 8)) || (state << (pos % 8));
@@ -73,7 +83,7 @@ struct DB *dbcreate(const char *file, const struct DBC conf)
     //printf("Trying to create a DB\n");
     struct DB *db = (DB *)malloc(sizeof(*db));
     db->config = conf;
-    db->dbfl = fopen(file, "w+");
+    db->dbfl = open(file, O_RDWR | O_CREAT, 0);
     db->maxnodecnt = conf.db_size / conf.chunk_size;
     db->get = get_inter;
     db->put = put_inter;
@@ -85,7 +95,7 @@ struct DB *dbcreate(const char *file, const struct DBC conf)
         reser_set(1, i, db);
     }
 
-    db->chsize = conf.memory_size / conf.chunk_size;
+    db->chsize = conf.mem_size / conf.chunk_size;
     db->cache = (char *)malloc(db->chsize * conf.chunk_size);
     db->chmap = new map<int, int>;
     db->lru = new list<int>;
@@ -126,8 +136,10 @@ struct BtreeNode *readNode(int offset, struct DB *db) {
         db->lru->push_back(offset);
     } else {
         int pos = cache_pop(db);
-        fseek(db->dbfl, offset * db->config.chunk_size, SEEK_SET);
-        fread(db->cache + db->config.chunk_size * pos, db->config.chunk_size, 1, db->dbfl);
+        int l = 0;
+        lseek(db->dbfl, offset * db->config.chunk_size, SEEK_SET);
+        while ((l += read(db->dbfl, db->cache + db->config.chunk_size * pos + l,
+            db->config.chunk_size - l)) < db->config.chunk_size) {}
         (*db->chmap)[offset] = pos;
         db->lru->push_back(offset);
     }
@@ -146,8 +158,9 @@ void writeNode(struct BtreeNode *node, struct DB *db) {
         db->lru->push_back(node->offset);
     }
     memcpy(db->cache + (*db->chmap)[node->offset] * db->config.chunk_size, node, db->config.chunk_size);
-    fseek(db->dbfl, node->offset * db->config.chunk_size, SEEK_SET);
-    fwrite(node, db->config.chunk_size - 1, 1, db->dbfl);
+    int l = 0;
+    lseek(db->dbfl, node->offset * db->config.chunk_size, SEEK_SET);
+    while ((l += write(db->dbfl, ((char *)node) + l, db->config.chunk_size - l)) < db->config.chunk_size) {}
     return;
 }
 
@@ -168,13 +181,15 @@ struct BtreeNode *newNode(struct DB *db) {
 int close_inter(struct DB *db) {
     writeNode(db->root, db);
     db->root_off = db->root->offset;
-    fseek(db->dbfl, 0, SEEK_SET);
-    fwrite(db, sizeof(*db), 1, db->dbfl);
-    fseek(db->dbfl, db->config.chunk_size, SEEK_SET);
-    fwrite(db->reser, 1, db->maxnodecnt, db->dbfl);
+    lseek(db->dbfl, 0, SEEK_SET);
+    int l = 0;
+    while ((l += write(db->dbfl, ((char *)db) + l, sizeof(*db) - l)) < sizeof(*db)) {};
+    lseek(db->dbfl, db->config.chunk_size, SEEK_SET);
+    l = 0;
+    while ((l += write(db->dbfl, db->reser + l, db->maxnodecnt - l)) < db->maxnodecnt) {}
     free(db->reser);
     free(db->root);
-    fclose(db->dbfl);
+    close(db->dbfl);
     free(db);
     //printf("Successfully closed\n");
     return 0;
@@ -183,9 +198,10 @@ int close_inter(struct DB *db) {
 struct DB *dbopen (const char *file)
 {
     struct DB *db = (struct DB *)malloc(sizeof(*db));
-    FILE *f = fopen(file, "r+");
-    fseek(f, 0, SEEK_SET);
-    fread(db, sizeof(*db), 1, f);
+    int f = open(file, O_RDWR | O_CREAT, 0);
+    lseek(f, 0, SEEK_SET);
+    int l = 0;
+    while ((l += read(f, ((char *)db) + l, sizeof(*db) - l)) < sizeof(*db)) {}
 
     db->dbfl = f;
     db->get = get_inter;
@@ -194,8 +210,9 @@ struct DB *dbopen (const char *file)
     db->close = close_inter;
 
     db->reser = (char *)calloc(db->maxnodecnt, 1);
-    fseek(db->dbfl, db->config.chunk_size, SEEK_SET);
-    fread(db->reser, 1, db->maxnodecnt, db->dbfl);
+    lseek(db->dbfl, db->config.chunk_size, SEEK_SET);
+    l = 0;
+    while ((l += read(db->dbfl, db->reser + l, db->maxnodecnt - l)) < db->maxnodecnt) {}
 
     db->cache = (char *)malloc(db->chsize * db->config.chunk_size);
     db->chmap = new map<int, int>;
@@ -581,94 +598,4 @@ int del_inter(struct DB *db, struct DBT *key)
         db->root = temp;
     }
     return res;
-}
-
-
-
-
-void stk(struct Key *a, char *b)
-{
-    a->size = strlen(b) + 1;
-    strcpy(a->data, b);
-    return;
-}
-
-void stk(struct Data *a, char *b)
-{
-    a->size = strlen(b) + 1;
-    strcpy(a->data, b);
-    return;
-}
-
-
-
-
-void init(struct Key *mykey, struct Data *mydata, struct DBT *key, struct DBT *data, int k) {
-    stk(&mykey[0], "qwer");
-    stk(&mydata[0], "My Little Pony");
-    stk(&mykey[1], "iuhiugu");
-    stk(&mydata[1], "Fire brigade");
-    stk(&mykey[2], "2hgvcty");
-    stk(&mydata[2], "Trick and Treat");
-    stk(&mykey[3], "56fv");
-    stk(&mydata[3], "\\(``)/");
-    stk(&mykey[4], "bgyugy d");
-    stk(&mydata[4], "For the glory");
-    stk(&mykey[5], "2 ghvvtyft");
-    stk(&mydata[5], "Friendship is magic");
-    stk(&mykey[6], "bhgvyt");
-    stk(&mydata[6], "Monty Python");
-    stk(&mykey[7], "moinu=-nkj");
-    stk(&mydata[7], "Griffindor");
-    stk(&mykey[8], " hugv6t7guy");
-    stk(&mydata[8], "Conquest");
-    for (int i = 0; i < k; i++) {
-        key[i].size = mykey[i].size;
-        key[i].data = (char *)&mykey[i].data;
-        data[i].size = mydata[i].size;
-        data[i].data = (char *)&mydata[i].data;
-
-    }
-    return;
-}
-
-int main()
-{
-    struct DBC sett;
-    sett.db_size = 400096;
-    sett.chunk_size = 4096;
-    sett.memory_size = 4096 * 10;
-    struct DB *mydb = dbcreate("db.txt", sett);
-
-
-    int size = 300, k = 9;
-    struct Key mykey[size];
-    struct Data mydata[size];
-    struct DBT key[size], data[size];
-
-    init((Key *)&mykey, (Data *)&mydata, (DBT *)&key, (DBT *)&data, k);
-
-    for (int i = 0; i < k; i++)
-        mydb->put(mydb, &key[i], &data[i]);
-    printTree(mydb->root, mydb, 1);
-
-    mydb->close(mydb);
-    mydb = dbopen("db.txt");
-
-    for (int i = 0; i < k - 4; i++) {
-        printf("%d\n", mydb->del(mydb, &key[i]));
-        printf("\n\n\n\n");
-        printTree(mydb->root, mydb, 1);
-    }
-
-    printf("\n\n\n\n");
-    int res;
-    for (int i = 0; i < k; i++) {
-        printf("%d\n", res = mydb->get(mydb, &key[i], &data[0]));
-        if (res >= 0) puts(data[0].data);//printf("%s\n", data[0].data);
-        //printf("%d %d%d%d%d%\n", mydata[0].size, mydata[0].data[0], mydata[0].data[1], mydata[0].data[2], mydata[0].data[3]);
-    }
-
-    //scanf("\n");
-    return 0;
 }
