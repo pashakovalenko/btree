@@ -96,12 +96,17 @@ struct DB *dbcreate(const char *file, const struct DBC conf)
     }
 
     db->chsize = conf.mem_size / conf.chunk_size;
+    //db->chsize = 1000;
+    //cout << db->chsize << endl;
     db->cache = (char *)malloc(db->chsize * conf.chunk_size);
     db->chmap = new map<int, int>;
-    db->lru = new list<int>;
+    db->queue = (int *)malloc(db->chsize * sizeof(*(db->queue)));
+    db->pos = (int *)malloc(db->chsize * sizeof(*(db->pos)));
+    db->qp = 0;
     for (int i = 0; i < db->chsize; i++) {
-        db->lru->push_back(-i - 1);
-        (*db->chmap)[-i - 1] = i;
+        db->queue[i] = -i - 1;
+        db->pos[i] = i;
+        //(*db->chmap)[-i - 1] = i;
     }
 
     db->root = newNode(db);
@@ -122,56 +127,90 @@ int keycmp(struct Key *a, struct Key *b) { //returns -1 if less, 0 if equal, 1 i
     return res;
 }
 
-int cache_pop(struct DB *db) {
+/*int cache_pop(struct DB *db) {
     int t = db->lru->front();
     db->lru->pop_front();
     int res = (*db->chmap)[t];
     db->chmap->erase(t);
     return res;
+}*/
+
+int qfind(int off, struct DB *db) {
+    /*if (db->chmap->find(off) != db->chmap->end()) {
+        return (*db->chmap)[off];
+    } else {
+        return -1;
+    }*/
+    for (int i = 0; i < db->chsize; i++) {
+        if (db->queue[i] == off) {
+            return i;
+        }
+    }
+    return -1;
 }
 
 struct BtreeNode *readNode(int offset, struct DB *db) {
-    if (db->chmap->find(offset) != db->chmap->end()) {
-        db->lru->remove(offset);
-        db->lru->push_back(offset);
+    //cout << "read1" << endl;
+    int pos;
+    if ((pos = qfind(offset, db)) >= 0) {
+        int p = db->qp;
+        /*int k = db->queue[pos];
+        db->queue[pos] = db->queue[p];
+        db->queue[p] = k;
+        k = db->pos[pos];
+        db->pos[pos] = db->pos[p];
+        db->pos[p] = k;
+        (*db->chmap)[offset] = p;
+        (*db->chmap)[db->queue[pos]] = pos;
+        */
+        pos = db->pos[pos];   //pos
+        db->qp = (p + 1) % db->chsize;
     } else {
-        int pos = cache_pop(db);
+        int p = db->qp;
+        //db->chmap->erase(db->queue[p]);
+        pos = db->pos[p];
+        db->queue[p] = offset;
+        //(*db->chmap)[offset] = p;
         int l = 0;
         lseek(db->dbfl, offset * db->config.chunk_size, SEEK_SET);
         while ((l += read(db->dbfl, db->cache + db->config.chunk_size * pos + l,
             db->config.chunk_size - l)) < db->config.chunk_size) {}
-        (*db->chmap)[offset] = pos;
-        db->lru->push_back(offset);
+        db->qp = (p + 1) % db->chsize;
     }
     struct BtreeNode *res = (BtreeNode *)calloc(1, db->config.chunk_size);
-    memcpy(res, db->cache + (*db->chmap)[offset] * db->config.chunk_size, db->config.chunk_size);
+    memcpy(res, db->cache + pos * db->config.chunk_size, db->config.chunk_size);
+    //cout << "read2" << endl;
     return res;
 }
 
 void writeNode(struct BtreeNode *node, struct DB *db) {
-    if (db->chmap->find(node->offset) != db->chmap->end()) {
-        db->lru->remove(node->offset);
-        db->lru->push_back(node->offset);
+    //cout << "write1" << endl;
+    int pos;
+    if ((pos = qfind(node->offset, db)) >= 0) {
+        pos = db->pos[pos];
+        //db->lru->remove(offset);
+        //db->lru->push_back(offset);
     } else {
-        int pos = cache_pop(db);
-        (*db->chmap)[node->offset] = pos;
-        db->lru->push_back(node->offset);
+        int p = db->qp;
+        //db->chmap->erase(db->queue[p]);
+        pos = db->pos[p];
+        db->queue[p] = node->offset;
+        //(*db->chmap)[node->offset] = p;
+        db->qp = (p + 1) % db->chsize;
     }
-    memcpy(db->cache + (*db->chmap)[node->offset] * db->config.chunk_size, node, db->config.chunk_size);
+    memcpy(db->cache + pos * db->config.chunk_size, node, db->config.chunk_size);
     int l = 0;
     lseek(db->dbfl, node->offset * db->config.chunk_size, SEEK_SET);
     while ((l += write(db->dbfl, ((char *)node) + l, db->config.chunk_size - l)) < db->config.chunk_size) {}
+    //cout << "write2" << endl;
     return;
 }
 
 struct BtreeNode *newNode(struct DB *db) {
-    int cache_pos = cache_pop(db);
     struct BtreeNode *res = (BtreeNode *)calloc(1, db->config.chunk_size);//db->cache + cache_pos * db->config.chunk_size;
     while (reser_get(db->froff, db)) {
         db->froff++;
     }
-    (*db->chmap)[db->froff] = cache_pos;
-    db->lru->push_back(db->froff);
     reser_set(1, db->froff, db);
     res->offset = db->froff;
     db->froff++;
@@ -216,10 +255,13 @@ struct DB *dbopen (const char *file)
 
     db->cache = (char *)malloc(db->chsize * db->config.chunk_size);
     db->chmap = new map<int, int>;
-    db->lru = new list<int>;
+    db->queue = (int *)malloc(db->chsize * sizeof(*(db->queue)));
+    db->pos = (int *)malloc(db->chsize * sizeof(*(db->pos)));
+    db->qp = 0;
     for (int i = 0; i < db->chsize; i++) {
-        db->lru->push_back(-i - 1);
-        (*db->chmap)[-i - 1] = i;
+        db->queue[i] = -i - 1;
+        db->pos[i] = i;
+        //(*db->chmap)[-i - 1] = i;
     }
 
     db->root = readNode(db->root_off, db);

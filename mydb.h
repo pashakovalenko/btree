@@ -59,7 +59,9 @@ struct DB {
     int chsize;
     char *cache;
     std::map <int, int> *chmap;
-    std::list <int> *lru;
+    //std::list <int> *lru;
+    int *queue, *pos;
+    int qp;
 };
 extern "C" {
 struct DB *dbcreate(const char *file, const struct DBC conf);
